@@ -8,12 +8,14 @@ void doubleClick();
 void changeState();
 void trackDelay();
 void pwdSwitch();
+void resetBtnStates();
 
 // состояние изменяется в обработчике прерывания, а в главном цикле лишь зажигаются светодиоды определенным образом в зависимости от состояния
 volatile int state       = 0;
 volatile int start       = 0;
 
 volatile int button      = 0;
+volatile int isCorrect   = 2;
 volatile int state_btn_1 = 0;
 volatile int state_btn_2 = 0;
 volatile int state_btn_3 = 0;
@@ -180,7 +182,7 @@ void EXTI4_IRQHandler(void)
     button = 1;
     state_btn_1++;
 
-    char msg[40];
+    char msg[25];
     sprintf(msg, "Button: %d, count: %d", button, state_btn_1);
     STEP_Println(msg);
 
@@ -193,7 +195,7 @@ void EXTI9_5_IRQHandler(void)
     button = 2;
     state_btn_2++;
 
-    char msg[40];
+    char msg[25];
     sprintf(msg, "Button: %d, count: %d", button, state_btn_2);
     STEP_Println(msg);
 
@@ -207,7 +209,7 @@ void EXTI3_IRQHandler(void)
     button = 3;
     state_btn_3++;
 
-    char msg[40];
+    char msg[25];
     sprintf(msg, "Button: %d, count: %d", button, state_btn_3);
     STEP_Println(msg);
 
@@ -262,7 +264,6 @@ void trackDelay()
 void pwdSwitch()
 {
     int pwd_btn_1 = 3, pwd_btn_2 = 1, pwd_btn_3 = 2;
-    int isCorrect = 2;
 
     while(1) {
         if (state_btn_1 > pwd_btn_1 ||
@@ -275,18 +276,33 @@ void pwdSwitch()
         if (isCorrect == 1) {
             HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13, 1);
             isCorrect = 2;
+            resetBtnStates();
+            continue;
         } else if(isCorrect == 2) {
-            HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13, 0);
+            if (button != 0) {
+                HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13, 0);
+            }
+            HAL_GPIO_WritePin(GPIOG, GPIO_PIN_14, 0);
             switch(button) {
                 case 1:
                     if (state_btn_1 < pwd_btn_1) continue;
                     break;
                 case 2:
-                    if (state_btn_2 < pwd_btn_2) continue;
+                    if (state_btn_1 < pwd_btn_1) {
+                        isCorrect = 0;
+                    } else if (state_btn_2 < pwd_btn_2) {
+                        continue;
+                    }
                     break;
                 case 3:
-                    if (state_btn_3 < pwd_btn_3) continue;
-                    if (state_btn_3 == pwd_btn_3) isCorrect = 1;
+                    if (state_btn_2 < pwd_btn_2) {
+                        isCorrect = 0;
+                    } else if (state_btn_3 < pwd_btn_3) {
+                        continue;
+                    } else if (state_btn_3 == pwd_btn_3) {
+                        isCorrect = 1;
+                    }
+                    break;
             }
         } else {
             HAL_GPIO_WritePin(GPIOG, GPIO_PIN_14, 1);
@@ -295,11 +311,18 @@ void pwdSwitch()
             HAL_Delay(150);
             HAL_GPIO_WritePin(GPIOG, GPIO_PIN_14, 1);
             HAL_Delay(200);
-            HAL_GPIO_WritePin(GPIOG, GPIO_PIN_14, 0);
-            state_btn_1 = state_btn_2 = state_btn_3 = 0;
+            resetBtnStates();
             isCorrect = 2;
         }
     }
+}
+
+/**
+ * Reset buttons states
+ */
+void resetBtnStates()
+{
+    state_btn_1 = state_btn_2 = state_btn_3 = button = 0;
 }
 
 void changeState()
