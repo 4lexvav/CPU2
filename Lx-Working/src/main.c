@@ -10,6 +10,8 @@ void trackDelay();
 void pwdSwitch();
 void resetBtnStates();
 
+void checkBtn(int);
+
 // состояние изменяется в обработчике прерывания, а в главном цикле лишь зажигаются светодиоды определенным образом в зависимости от состояния
 volatile int state       = 0;
 volatile int start       = 0;
@@ -19,6 +21,9 @@ volatile int isCorrect   = 2;
 volatile int state_btn_1 = 0;
 volatile int state_btn_2 = 0;
 volatile int state_btn_3 = 0;
+
+volatile int index   = 0;
+volatile int code[4] = {1, 3, 1, 2};
 
 void Led_Init()
 {
