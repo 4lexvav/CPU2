@@ -3,167 +3,88 @@
 #include <stdint.h>
 #include "step_utils.h"
 
-void switchState();
-void checkBtn(int);
+ADC_HandleTypeDef hadc1;
 
-// состояние изменяется в обработчике прерывания, а в главном цикле лишь зажигаются светодиоды определенным образом в зависимости от состояния
-volatile int index   = 0;
-volatile int error   = 0;
-volatile int code[4] = {1, 3, 1, 2};
-
-void Led_Init()
+void LED_Init()
 {
-    // структуры инициализации портов и их пинов
-    GPIO_InitTypeDef GPIOG_Init;
+    GPIO_InitTypeDef portGinit;
 
     __GPIOG_CLK_ENABLE();
+    portGinit.Pin   = GPIO_PIN_14 | GPIO_PIN_13;
+    portGinit.Mode  = GPIO_MODE_OUTPUT_PP;
+    portGinit.Pull  = GPIO_PULLDOWN;
+    portGinit.Speed = GPIO_SPEED_LOW;
+    HAL_GPIO_Init(GPIOG, &portGinit);
 
-    GPIOG_Init.Pin   = GPIO_PIN_14 | GPIO_PIN_13;
-    GPIOG_Init.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIOG_Init.Pull  = GPIO_PULLDOWN;
-    GPIOG_Init.Speed = GPIO_SPEED_LOW;
-
-    HAL_GPIO_Init(GPIOG, &GPIOG_Init);
+    HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13 | GPIO_PIN_14, 0);
 }
 
-void BRD_Btn_B4_Init()
+void ADC1_Init(void)
 {
-    GPIO_InitTypeDef GPIOB_Init;
-
-    // Включаем питание и тактирование на портах B
-    __GPIOB_CLK_ENABLE();
-
-    GPIOB_Init.Pin   = GPIO_PIN_4;
-    // https://ru.wikipedia.org/wiki/Фронт_сигнала
-    // GPIOB_Init.Mode = GPIO_MODE_IT_FALLING; //- по заднему фронту (спадающий)
-    // GPIOA_Init.Mode = GPIO_MODE_IT_RISING_FALLING; // - на каждое нажатие кнопки будет сгенерировано два события, и по переднему и по заднему фронту
-    GPIOB_Init.Mode  = GPIO_MODE_IT_RISING; // событие будет сгенерировано в момент нажатия кнопки (восходящий, передний фронт)
-    GPIOB_Init.Pull  = GPIO_PULLDOWN; // подтягиваем ее к земле
-    GPIOB_Init.Speed = GPIO_SPEED_MEDIUM;
-
-    HAL_GPIO_Init(GPIOB, &GPIOB_Init); // - инициализируем порт, передаем структуру
-}
-
-void BRD_Btn_B7_Init()
-{
-    GPIO_InitTypeDef GPIOB_Init;
-
-    __GPIOB_CLK_ENABLE();
-
-    GPIOB_Init.Pin   = GPIO_PIN_7;
-    GPIOB_Init.Mode  = GPIO_MODE_IT_RISING;
-    GPIOB_Init.Pull  = GPIO_PULLDOWN;
-    GPIOB_Init.Speed = GPIO_SPEED_MEDIUM;
-
-    HAL_GPIO_Init(GPIOB, &GPIOB_Init);
-}
-
-void BRD_Btn_C3_Init()
-{
-    GPIO_InitTypeDef GPIOC_Init;
-
+    GPIO_InitTypeDef portCinit;
+    __ADC1_CLK_ENABLE();
     __GPIOC_CLK_ENABLE();
 
-    GPIOC_Init.Pin   = GPIO_PIN_3;
-    GPIOC_Init.Mode  = GPIO_MODE_IT_RISING;
-    GPIOC_Init.Pull  = GPIO_PULLDOWN;
-    GPIOC_Init.Speed = GPIO_SPEED_LOW;
+    /**
+    ADC1 GPIO Configuration
+    Из документации прочитали, что
+    пин PC0 используется, как 10 канал для АЦП1
+    PC1 - 11
+    PC2 - 12
+    PC3 - 13
+    */
+    portCinit.Pin   = GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3;
+    portCinit.Mode  = GPIO_MODE_ANALOG; // Выставляем его в аналоговый режим
+    portCinit.Pull  = GPIO_NOPULL; // без подтягивающих резисторов
+    HAL_GPIO_Init(GPIOC, &portCinit); // инициализируем порт С
 
-    HAL_GPIO_Init(GPIOC, &GPIOC_Init);
+    /**Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+    */
+    hadc1.Instance = ADC1; // указываем какой АЦП хотим использовать. Варианты ADC1, ADC2, ADC3
+    hadc1.Init.ClockPrescaler = ADC_CLOCKPRESCALER_PCLK_DIV2; // Делитель частоты для АЦП
+    hadc1.Init.Resolution = ADC_RESOLUTION12b; // точность (разрешение) АЦП. Выставили точность 12 бит (максимум)
+    hadc1.Init.ScanConvMode = DISABLE;
+    hadc1.Init.ContinuousConvMode = DISABLE;
+    hadc1.Init.DiscontinuousConvMode = DISABLE;
+    hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+    hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+    hadc1.Init.NbrOfConversion = 1;
+    hadc1.Init.DMAContinuousRequests = DISABLE;
+    hadc1.Init.EOCSelection = EOC_SINGLE_CONV;
+    HAL_ADC_Init(&hadc1); // инициализируем АЦП
 }
 
-void init()
+uint32_t ADC_GetValue(uint32_t adc_channel)
+{
+    // Настраиваем канал
+    ADC_ChannelConfTypeDef sConfig;
+
+    sConfig.Channel = adc_channel; // номер канала, который передали в функцию
+    sConfig.Rank = 1; // его порядок в очереди. В нашем случае он один
+    sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES; // сколько тактов на сэмплирование.
+    HAL_ADC_ConfigChannel(&hadc1, &sConfig); // вызываем функцию настройки канала. Передаем ей структуру АЦП и структуру настроек канала
+
+    // Считываем значение АЦП
+    HAL_ADC_Start(&hadc1); // запускаем оцифровку сигнала
+    HAL_ADC_PollForConversion(&hadc1, 1); // дожидаемся, пока не получим результат
+
+    return HAL_ADC_GetValue(&hadc1);
+}
+
+int main(void)
 {
     SystemInit();
     HAL_Init();
     STEP_Init();
 
-    Led_Init();
+    LED_Init();
+    ADC1_Init();
 
-    BRD_Btn_B4_Init();
-    BRD_Btn_B7_Init();
-    BRD_Btn_C3_Init();
+    while (1)
+    {
+        HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13); // моргаем зеленым светодиодом
 
-    // Говорим нашему контроллеру прерываний (NVIC), что мы хотим обрабатывать прерывание EXTI4_IRQn
-    HAL_NVIC_EnableIRQ(EXTI4_IRQn);
-    HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
-    HAL_NVIC_EnableIRQ(EXTI3_IRQn);
-}
-
-int main(void)
-{
-    init();
-
-    switchState();
-
-    return 0;
-}
-
-// название обработчика прерывания аналогично прерыванию (EXTI0_IRQn) только вместо "n" - "Handler"
-void EXTI4_IRQHandler(void)
-{
-    // Тут выполняется ваш код, обработчик прерывания
-    int btn = 1;
-
-    checkBtn(btn);
-
-    char msg[25];
-    sprintf(msg, "Button: %d, count: %d", btn, index);
-    STEP_Println(msg);
-
-    // Тут выполняется ваш код, обработчик прерывания
-    HAL_NVIC_ClearPendingIRQ(EXTI4_IRQn);
-    // Тут выполняется ваш код, обработчик прерывания
-    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_4);
-}
-
-void EXTI9_5_IRQHandler(void)
-{
-    int btn = 2;
-
-    checkBtn(btn);
-
-    char msg[25];
-    sprintf(msg, "Button: %d, count: %d", btn, index);
-    STEP_Println(msg);
-
-    HAL_NVIC_ClearPendingIRQ(EXTI9_5_IRQn);
-    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_7);
-}
-
-void EXTI3_IRQHandler(void)
-{
-    int btn = 3;
-
-    checkBtn(btn);
-
-    char msg[25];
-    sprintf(msg, "Button: %d, index: %d", btn, index);
-    STEP_Println(msg);
-
-    HAL_NVIC_ClearPendingIRQ(EXTI3_IRQn);
-    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_3);
-}
-
-void switchState()
-{
-    while (1) {
-        if (index == 4) {
-            HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13, 1);
-            continue;
-        } else {
-            HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13, 0);
-            continue;
-        }
-    }
-}
-
-void checkBtn(int btnNum)
-{
-    if (code[index] == btnNum) {
-        index++;
-    } else {
-        index = 0;
+        int value = ADC_GetValue(ADC_CHANNEL_13); // можно использовать каналы ADC_CHANNEL_11, 12 и 13
     }
 }
 
