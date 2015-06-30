@@ -43,6 +43,7 @@ void ADC1_Init(void)
     hadc1.Instance = ADC1; // указываем какой АЦП хотим использовать. Варианты ADC1, ADC2, ADC3
     hadc1.Init.ClockPrescaler = ADC_CLOCKPRESCALER_PCLK_DIV2; // Делитель частоты для АЦП
     hadc1.Init.Resolution = ADC_RESOLUTION12b; // точность (разрешение) АЦП. Выставили точность 12 бит (максимум)
+
     hadc1.Init.ScanConvMode = DISABLE;
     hadc1.Init.ContinuousConvMode = DISABLE;
     hadc1.Init.DiscontinuousConvMode = DISABLE;
@@ -80,11 +81,18 @@ int main(void)
     LED_Init();
     ADC1_Init();
 
+    char* msg[30];
+
     while (1)
     {
         HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13); // моргаем зеленым светодиодом
 
         int value = ADC_GetValue(ADC_CHANNEL_13); // можно использовать каналы ADC_CHANNEL_11, 12 и 13
+
+        sprintf(msg, "ADC value = %d", value);
+        STEP_Println(msg);
+
+        HAL_Delay(1000);
     }
 }
 
