@@ -50,33 +50,22 @@ int main(void)
     // TimersInit();
     STEP_DBG_Osc();
 
-    int step = 24, change = 1, i = 0, delay = 0;
+    int change = 1, delay = 0, base = 25;
 
     //HAL_TIM_Base_Start_IT(&htim6); // запускаем таймер в режиме прерываний
     while (1)
     {
+        HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13, 1);
+        HAL_GPIO_WritePin(GPIOG, GPIO_PIN_14, 0);
+        HAL_Delay(delay);
 
-        for (i = 0; i <= step; i++) {
-            HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13);
-            if (delay >= 12) {
-                change = -1;
-            } else if (delay <= 0) {
-                change = 1;
-            }
-            delay += change;
-            HAL_Delay(delay);
-        }
+        HAL_GPIO_WritePin(GPIOG, GPIO_PIN_14, 1);
+        HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13, 0);
+        HAL_Delay(base - delay);
 
-        for (i = 0; i <= step; i++) {
-            HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_14);
-            if (delay >= 12) {
-                change = -1;
-            } else if (delay <= 0) {
-                change = 1;
-            }
-            delay += change;
-            HAL_Delay(delay);
-        }
+        delay += change;
+        if (delay >= base) change = -1;
+        else if (delay <= 0) change = 1;
     }
 }
 
