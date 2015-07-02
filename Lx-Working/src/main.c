@@ -1,75 +1,44 @@
 #include "stm32f4xx.h"
 #include "stm32f4xx_hal.h"
 #include <stdint.h>
-#include "step_utils.h"
+#include <stdio.h>
+#include "step_utils.h"a
 
-ADC_HandleTypeDef hadc1;
+#define DOWN 0
+#define UP   1
 
-void LED_Init()
+// структуры инициализации портов и их пинов
+GPIO_InitTypeDef GPIOG_Init;
+TIM_HandleTypeDef htim6;
+
+volatile int mode = DOWN;
+
+void TimersInit()
 {
-    GPIO_InitTypeDef portGinit;
+// BASIC Timer init
+    __TIM6_CLK_ENABLE();
+    htim6.Instance = TIM6;
+    htim6.Init.CounterMode = TIM_COUNTERMODE_UP; // считает от 0 вверх
+    htim6.Init.Prescaler = 8400-1; // Предделитель
+    htim6.Init.Period = 10000-1; // Период
+    HAL_TIM_Base_Init(&htim6); // Инициализируем
 
+    HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn); // Разрешаем прерывание таймера.У 7-го - TIM7_IRQn
+}
+
+void LedInit()
+{
     __GPIOG_CLK_ENABLE();
-    portGinit.Pin   = GPIO_PIN_14 | GPIO_PIN_13;
-    portGinit.Mode  = GPIO_MODE_OUTPUT_PP;
-    portGinit.Pull  = GPIO_PULLDOWN;
-    portGinit.Speed = GPIO_SPEED_LOW;
-    HAL_GPIO_Init(GPIOG, &portGinit);
 
-    HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13 | GPIO_PIN_14, 0);
-}
+    // светодиоды настраиваем на выход
+    GPIOG_Init.Pin   = GPIO_PIN_14 | GPIO_PIN_13; // 13 - зеленый, 14 - красный
+    GPIOG_Init.Mode  = GPIO_MODE_OUTPUT_PP;
+    // GPIOG_Init.Pull  = GPIO_PULLDOWN;
+    GPIOG_Init.Pull  = GPIO_NOPULL;
+    GPIOG_Init.Speed = GPIO_SPEED_LOW;
 
-void ADC1_Init(void)
-{
-    GPIO_InitTypeDef portCinit;
-    __ADC1_CLK_ENABLE();
-    __GPIOC_CLK_ENABLE();
+    HAL_GPIO_Init(GPIOG, &GPIOG_Init); // инизиализируем порт, передаем структуру
 
-    /**
-    ADC1 GPIO Configuration
-    Из документации прочитали, что
-    пин PC0 используется, как 10 канал для АЦП1
-    PC1 - 11
-    PC2 - 12
-    PC3 - 13
-    */
-    portCinit.Pin   = GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3;
-    portCinit.Mode  = GPIO_MODE_ANALOG; // Выставляем его в аналоговый режим
-    portCinit.Pull  = GPIO_NOPULL; // без подтягивающих резисторов
-    HAL_GPIO_Init(GPIOC, &portCinit); // инициализируем порт С
-
-    /**Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
-    */
-    hadc1.Instance = ADC1; // указываем какой АЦП хотим использовать. Варианты ADC1, ADC2, ADC3
-    hadc1.Init.ClockPrescaler = ADC_CLOCKPRESCALER_PCLK_DIV2; // Делитель частоты для АЦП
-    hadc1.Init.Resolution = ADC_RESOLUTION12b; // точность (разрешение) АЦП. Выставили точность 12 бит (максимум)
-
-    hadc1.Init.ScanConvMode = DISABLE;
-    hadc1.Init.ContinuousConvMode = DISABLE;
-    hadc1.Init.DiscontinuousConvMode = DISABLE;
-    hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-    hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-    hadc1.Init.NbrOfConversion = 1;
-    hadc1.Init.DMAContinuousRequests = DISABLE;
-    hadc1.Init.EOCSelection = EOC_SINGLE_CONV;
-    HAL_ADC_Init(&hadc1); // инициализируем АЦП
-}
-
-uint32_t ADC_GetValue(uint32_t adc_channel)
-{
-    // Настраиваем канал
-    ADC_ChannelConfTypeDef sConfig;
-
-    sConfig.Channel = adc_channel; // номер канала, который передали в функцию
-    sConfig.Rank = 1; // его порядок в очереди. В нашем случае он один
-    sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES; // сколько тактов на сэмплирование.
-    HAL_ADC_ConfigChannel(&hadc1, &sConfig); // вызываем функцию настройки канала. Передаем ей структуру АЦП и структуру настроек канала
-
-    // Считываем значение АЦП
-    HAL_ADC_Start(&hadc1); // запускаем оцифровку сигнала
-    HAL_ADC_PollForConversion(&hadc1, 1); // дожидаемся, пока не получим результат
-
-    return HAL_ADC_GetValue(&hadc1);
 }
 
 int main(void)
@@ -77,23 +46,70 @@ int main(void)
     SystemInit();
     HAL_Init();
     STEP_Init();
+    LedInit();
+    // TimersInit();
+    STEP_DBG_Osc();
 
-    LED_Init();
-    ADC1_Init();
+    int step = 24, change = 1, i = 0, delay = 0;
 
-    char* msg[30];
-
+    //HAL_TIM_Base_Start_IT(&htim6); // запускаем таймер в режиме прерываний
     while (1)
     {
-        HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13); // моргаем зеленым светодиодом
 
-        int value = ADC_GetValue(ADC_CHANNEL_13); // можно использовать каналы ADC_CHANNEL_11, 12 и 13
+        for (i = 0; i <= step; i++) {
+            HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13);
+            if (delay >= 12) {
+                change = -1;
+            } else if (delay <= 0) {
+                change = 1;
+            }
+            delay += change;
+            HAL_Delay(delay);
+        }
 
-        sprintf(msg, "ADC value = %d", value);
-        STEP_Println(msg);
-
-        HAL_Delay(1000);
+        for (i = 0; i <= step; i++) {
+            HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_14);
+            if (delay >= 12) {
+                change = -1;
+            } else if (delay <= 0) {
+                change = 1;
+            }
+            delay += change;
+            HAL_Delay(delay);
+        }
     }
+}
+
+// Обработчик прерывания таймера
+void TIM6_DAC_IRQHandler()
+{
+    HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13);
+
+    int step = 500;
+
+    char msg[30];
+    sprintf(msg, "Period = %d", TIM6->ARR);
+    STEP_Println(msg);
+
+    switch (mode) {
+        case UP:
+            TIM6->ARR += step;
+            break;
+
+        case DOWN:
+            TIM6->ARR -= step;
+            break;
+    }
+
+    TIM6->CNT = 0;
+
+    if (TIM6->ARR >= 10000 - 1) {
+        mode = DOWN;
+    } else if (TIM6->ARR <= 1000) {
+        mode = UP;
+    }
+
+    HAL_TIM_IRQHandler(&htim6); // нужно для работы библиотеки HAL
 }
 
 void SysTick_Handler()
