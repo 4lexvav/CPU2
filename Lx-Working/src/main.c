@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 // структуры инициализации портов и их пинов
+ADC_HandleTypeDef hadc1;
 GPIO_InitTypeDef GPIOG_Init;
 GPIO_InitTypeDef GPIOE_Init;
 TIM_HandleTypeDef htim6;
@@ -12,7 +13,34 @@ TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim9;
 TIM_OC_InitTypeDef sConfigOC; // структура для настройки каналов таймера
 
-void TimersInit(){
+void ADC1_Init()
+{
+    GPIO_InitTypeDef portCinit;
+
+    __ADC1_CLK_ENABLE();
+    __GPIOC_CLK_ENABLE();
+
+    portCinit.Pin  = GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3;
+    portCinit.Mode = GPIO_MODE_ANALOG;
+    portCinit.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOC, &portCinit);
+
+    hadc1.Instance                   = ADC1;
+    hadc1.Init.ClockPrescaler        = ADC_CLOCKPRESCALER_PCLK_DIV2;
+    hadc1.Init.Resolution            = ADC_RESOLUTION12b;
+    hadc1.Init.ScanConvMode          = DISABLE;
+    hadc1.Init.ContinuousConvMode    = DISABLE;
+    hadc1.Init.DiscontinuousConvMode = DISABLE;
+    hadc1.Init.ExternalTrigConvEdge  = ADC_EXTERNALTRIGCONVEDGE_NONE;
+    hadc1.Init.DataAlign             = ADC_DATAALIGN_RIGHT;
+    hadc1.Init.NbrOfConversion       = 1;
+    hadc1.Init.DMAContinuousRequests = DISABLE;
+    hadc1.Init.EOCSelection          = EOC_SINGLE_CONV;
+    HAL_ADC_Init(&hadc1);
+}
+
+void TimersInit()
+{
 // BASIC Timer init
     __TIM6_CLK_ENABLE();
     htim6.Instance = TIM6;
@@ -77,29 +105,45 @@ void setPWM(int pulse)
     TIM9->CCR2 = pulse;
 }
 
+uint32_t ADC_GetValue(uint32_t adc_channel)
+{
+    ADC_ChannelConfTypeDef sConfig;
+
+    sConfig.Channel      = adc_channel;
+    sConfig.Rank         = 1;
+    sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+    HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+
+    HAL_ADC_Start(&hadc1);
+    HAL_ADC_PollForConversion(&hadc1, 1);
+
+    return HAL_ADC_GetValue(&hadc1);
+}
+
 int main(void)
 {
     SystemInit();
     HAL_Init();
     STEP_Init();
-    LedInit();
-    TimersInit();
     STEP_DBG_Osc();
 
-    HAL_TIM_Base_Start_IT(&htim6); // запускаем таймер в режиме прерываний
+    LedInit();
+    TimersInit();
+    ADC1_Init();
 
-    HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1); // запускаем генерацию ШИМ сигнала на 1-м канале
-    HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2); // ... на 2-м канале
+    char* msg[30];
+    int value;
 
-    int position = 800;
-    while (1)
-    {
-        HAL_Delay(100);
+    while (1) {
 
-        setPWM(position);
+        HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13);
 
-        position = position + 100;
-        if (position > 2700) position = 800;
+        value = ADC_GetValue(ADC_CHANNEL_13);
+
+        sprintf(msg, "ADC value = %d", msg);
+        STEP_Println(msg);
+
+        HAL_Delay(400);
     }
 }
 
