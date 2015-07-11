@@ -6,13 +6,8 @@
 
 // структуры инициализации портов и их пинов
 ADC_HandleTypeDef hadc1;
-// GPIO_InitTypeDef GPIOG_Init;
 
-// GPIO_InitTypeDef GPIOE_Init;
-TIM_HandleTypeDef htim6;
-
-// TIM_HandleTypeDef htim9;
-// TIM_OC_InitTypeDef sConfigOC; // структура для настройки каналов таймера
+void start();
 
 volatile int adcValue;
 
@@ -42,53 +37,6 @@ void ADC1_Init(void)
     HAL_ADC_Init(&hadc1); // инициализируем АЦП
 }
 
-void TimersInit()
-{
-// BASIC Timer init
-    __TIM6_CLK_ENABLE();
-    htim6.Instance = TIM6;
-
-    // Частота таймера - 168 MHz
-    htim6.Init.CounterMode = TIM_COUNTERMODE_UP; // считает от 0 вверх
-    htim6.Init.Prescaler = 8400 - 1; // Предделитель 4 (счет идет от 0!)
-    htim6.Init.Period = 10000 - 1; // Период 420 (счет идет от 0!) 4*420 = 1680 (каждые 10 микросекунд)
-    HAL_TIM_Base_Init(&htim6); // Инициализируем
-
-    HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn); // Разрешаем прерывание таймера
-
-// GP Timer init
-    /*__TIM9_CLK_ENABLE();
-    __GPIOE_CLK_ENABLE();
-
-    // PE5 - TIM9_CH1
-    // PE6 - TIM9_CH2
-    GPIOE_Init.Pin   = GPIO_PIN_5 | GPIO_PIN_6;
-    GPIOE_Init.Mode  = GPIO_MODE_AF_PP; // альтернативная функция
-    GPIOE_Init.Alternate = GPIO_AF3_TIM9; // название альтернативной функции
-    GPIOE_Init.Pull  = GPIO_NOPULL;
-    GPIOE_Init.Speed = GPIO_SPEED_LOW;
-
-    HAL_GPIO_Init(GPIOE, &GPIOE_Init);
-
-    htim9.Instance = TIM9;
-// сервоприводы работают на частоте 50 Гц
-    htim9.Init.Prescaler = 168 - 1; // 168 MHz / 168 = 1 MHz
-    htim9.Init.Period = 20000 - 1; // 50 Hz = 20 ms
-    htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
-
-    HAL_TIM_PWM_Init(&htim9);
-
-    sConfigOC.OCMode = TIM_OCMODE_PWM1;
-    sConfigOC.Pulse = 2000; // 2000 микросекунд
-    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-    HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_1);
-
-    sConfigOC.OCMode = TIM_OCMODE_PWM1;
-    sConfigOC.Pulse = 1440; // 1440 микросекунд
-    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-    HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_2);*/
-}
-
 void LED_Init()
 {
     GPIO_InitTypeDef portGinit;
@@ -96,18 +44,9 @@ void LED_Init()
     __GPIOG_CLK_ENABLE();
     portGinit.Pin   = GPIO_PIN_14 | GPIO_PIN_13;
     portGinit.Mode  = GPIO_MODE_OUTPUT_PP;
-    // portGinit.Pull  = GPIO_PULLDOWN;
     portGinit.Pull  = GPIO_NOPULL;
     portGinit.Speed = GPIO_SPEED_LOW;
     HAL_GPIO_Init(GPIOG, &portGinit);
-
-    // HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13 | GPIO_PIN_14, 0);
-}
-
-void setPWM(int pulse)
-{
-    TIM9->CCR1 = pulse; // записываем значение напрямую в регистр таймера
-    TIM9->CCR2 = pulse;
 }
 
 uint32_t ADC_GetValue(uint32_t adc_channel)
@@ -126,47 +65,47 @@ uint32_t ADC_GetValue(uint32_t adc_channel)
     return HAL_ADC_GetValue(&hadc1);
 }
 
-int main(void)
+void init()
 {
     SystemInit();
     HAL_Init();
     STEP_Init();
 
     LED_Init();
-    TimersInit();
     ADC1_Init();
 
     STEP_DBG_Osc();
+}
 
-    char* msg[30];
-    int value;
+int main(void)
+{
+    init();
+    start();
+}
+
+void start()
+{
+    int width   = BSP_LCD_GetXSize();
+    int height  = BSP_LCD_GetYSize();
+    int baseAdc = ADC_GetValue(ADC_CHANNEL_13) / 10;
+    int xPxPos  = width/2; // Base pixel position on the X axis
+    int yPxPos  = 0;
+    int currentAdc = baseAdc;
 
     while (1)
     {
-        HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13); // моргаем зеленым светодиодом
+        BSP_LCD_DrawPixel(xPxPos + baseAdc - currentAdc, yPxPos++, LCD_COLOR_YELLOW);
 
-        //adcValue = ADC_GetValue(ADC_CHANNEL_13); // можно использовать каналы ADC_CHANNEL_11, 12 и 13
-        value = ADC_GetValue(ADC_CHANNEL_13);
+        if (yPxPos >= height)
+        {
+            BSP_LCD_Clear(LCD_COLOR_BLACK);
+            yPxPos = 0;
+        }
 
-        sprintf(msg, "ADC value = %d", value);
-        STEP_Println(msg);
+        currentAdc = ADC_GetValue(ADC_CHANNEL_13) / 10;
 
-        HAL_Delay(300);
+        HAL_Delay(50);
     }
-}
-
-// Обработчик прерывания таймера
-void TIM6_DAC_IRQHandler()
-{
-    char* msg[30];
-
-    HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13);
-    adcValue = ADC_GetValue(ADC_CHANNEL_13);
-
-    sprintf(msg, "Timer ADC value = %d", adcValue);
-    STEP_Println(msg);
-
-    HAL_TIM_IRQHandler(&htim6);
 }
 
 void SysTick_Handler()
