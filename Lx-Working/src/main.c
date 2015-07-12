@@ -6,15 +6,27 @@
 
 // структуры инициализации портов и их пинов
 ADC_HandleTypeDef hadc1;
-// GPIO_InitTypeDef GPIOG_Init;
-
-// GPIO_InitTypeDef GPIOE_Init;
+GPIO_InitTypeDef GPIOE_Init; // Pins for TIM9
 TIM_HandleTypeDef htim6;
+TIM_HandleTypeDef htim9;
+TIM_OC_InitTypeDef sConfigOC; // структура для настройки каналов таймера
 
-// TIM_HandleTypeDef htim9;
-// TIM_OC_InitTypeDef sConfigOC; // структура для настройки каналов таймера
+volatile int adcBase;
+volatile int adcCurrent;
+volatile yPxPos = 0;
 
-volatile int adcValue;
+/**
+ * 0 - base state, only red light, pulse = 3000
+ * 1 - increase pulse brightness to max and during next 1 sec. check ADC
+ * 2 - enable green, disable other - for 5 sec., then switch back
+ */
+volatile int state  = 0;
+
+/**
+ * Draw vertical line depending on value of photoresistor
+ */
+void drawLine();
+void smartLights();
 
 void ADC1_Init(void)
 {
@@ -48,16 +60,16 @@ void TimersInit()
     __TIM6_CLK_ENABLE();
     htim6.Instance = TIM6;
 
-    // Частота таймера - 168 MHz
+    // Частота таймера - 84 MHz
     htim6.Init.CounterMode = TIM_COUNTERMODE_UP; // считает от 0 вверх
-    htim6.Init.Prescaler = 8400 - 1; // Предделитель 4 (счет идет от 0!)
-    htim6.Init.Period = 10000 - 1; // Период 420 (счет идет от 0!) 4*420 = 1680 (каждые 10 микросекунд)
+    htim6.Init.Prescaler = 8400 / 50 - 1; // Предделитель
+    htim6.Init.Period = 10000 - 1; // Период 10000 (счет идет от 0!) 8400*10000 = 84 000 000 (каждую секунду)
     HAL_TIM_Base_Init(&htim6); // Инициализируем
 
     HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn); // Разрешаем прерывание таймера
 
 // GP Timer init
-    /*__TIM9_CLK_ENABLE();
+    __TIM9_CLK_ENABLE();
     __GPIOE_CLK_ENABLE();
 
     // PE5 - TIM9_CH1
@@ -79,14 +91,34 @@ void TimersInit()
     HAL_TIM_PWM_Init(&htim9);
 
     sConfigOC.OCMode = TIM_OCMODE_PWM1;
-    sConfigOC.Pulse = 2000; // 2000 микросекунд
+    // sConfigOC.Pulse = 2000; // 2000 микросекунд
+    sConfigOC.Pulse = 3000; // 2000 микросекунд
     sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
     HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_1);
+}
 
-    sConfigOC.OCMode = TIM_OCMODE_PWM1;
-    sConfigOC.Pulse = 1440; // 1440 микросекунд
-    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-    HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_2);*/
+void BRD_Led_Init()
+{
+    GPIO_InitTypeDef portB;
+
+    __GPIOB_CLK_ENABLE();
+    portB.Pin = GPIO_PIN_4 | GPIO_PIN_7; // portB4 - yellow, portB7 - green
+    portB.Mode = GPIO_MODE_OUTPUT_PP;
+    portB.Pull = GPIO_NOPULL;
+    portB.Speed = GPIO_SPEED_LOW;
+
+    HAL_GPIO_Init(GPIOB, &portB);
+
+    GPIO_InitTypeDef portA;
+
+    __GPIOA_CLK_ENABLE();
+    portA.Pin = GPIO_PIN_10; // portA10 - red
+    portA.Mode = GPIO_MODE_OUTPUT_PP;
+    portA.Pull = GPIO_NOPULL;
+    portA.Speed = GPIO_SPEED_LOW;
+
+    HAL_GPIO_Init(GPIOA, &portA);
+
 }
 
 void LED_Init()
@@ -102,12 +134,6 @@ void LED_Init()
     HAL_GPIO_Init(GPIOG, &portGinit);
 
     // HAL_GPIO_WritePin(GPIOG, GPIO_PIN_13 | GPIO_PIN_14, 0);
-}
-
-void setPWM(int pulse)
-{
-    TIM9->CCR1 = pulse; // записываем значение напрямую в регистр таймера
-    TIM9->CCR2 = pulse;
 }
 
 uint32_t ADC_GetValue(uint32_t adc_channel)
@@ -126,7 +152,7 @@ uint32_t ADC_GetValue(uint32_t adc_channel)
     return HAL_ADC_GetValue(&hadc1);
 }
 
-int main(void)
+void init()
 {
     SystemInit();
     HAL_Init();
@@ -135,36 +161,99 @@ int main(void)
     LED_Init();
     TimersInit();
     ADC1_Init();
+    BRD_Led_Init();
 
     STEP_DBG_Osc();
 
-    char* msg[30];
-    int value;
+    HAL_TIM_Base_Start_IT(&htim6); // Start timer in the interruption mode
 
-    while (1)
-    {
-        HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13); // моргаем зеленым светодиодом
+    HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1); // запускаем генерацию ШИМ сигнала на 1-м канале
+}
 
-        //adcValue = ADC_GetValue(ADC_CHANNEL_13); // можно использовать каналы ADC_CHANNEL_11, 12 и 13
-        value = ADC_GetValue(ADC_CHANNEL_13);
+int main(void)
+{
+    init();
 
-        sprintf(msg, "ADC value = %d", value);
-        STEP_Println(msg);
+    smartLights();
+}
 
-        HAL_Delay(300);
+void setPWM(int pulse)
+{
+    TIM9->CCR1 = pulse; // записываем значение напрямую в регистр таймера
+}
+
+void smartLights()
+{
+    adcBase = ADC_GetValue(ADC_CHANNEL_13);
+    int delay;
+    while (1) {
+        switch (state) {
+            case 0:
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET); // YELLOW
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET); // GREEN
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); // RED
+                setPWM(3000);
+                continue;
+            case 1:
+                setPWM(10000);
+                HAL_Delay(1000);
+                if ((adcCurrent - adcBase) > 20) {
+                    state = 2;
+                } else {
+                    state = 0;
+                }
+                setPWM(3000);
+                continue;
+            case 2:
+                delay = 5;
+                while (delay) {
+                    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_4);
+                    delay--;
+                    HAL_Delay(400);
+                }
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
+                HAL_Delay(5000);
+
+                delay = 5;
+                while (delay) {
+                    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
+                    delay--;
+                    HAL_Delay(400);
+                }
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+                state = 0;
+                continue;
+        }
     }
+}
+
+void drawLine()
+{
+    int width   = BSP_LCD_GetXSize();
+    int height  = BSP_LCD_GetYSize();
+    int xPxPos  = width/2; // Base pixel position on the X axis
+
+    BSP_LCD_DrawPixel(xPxPos + (adcBase / 10) - (adcCurrent / 10), yPxPos++, LCD_COLOR_YELLOW);
+
+    if (yPxPos >= height)
+    {
+        BSP_LCD_Clear(LCD_COLOR_BLACK);
+        yPxPos = 0;
+    }
+
+    adcCurrent = ADC_GetValue(ADC_CHANNEL_13);
 }
 
 // Обработчик прерывания таймера
 void TIM6_DAC_IRQHandler()
 {
-    char* msg[30];
+    drawLine();
 
-    HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13);
-    adcValue = ADC_GetValue(ADC_CHANNEL_13);
-
-    sprintf(msg, "Timer ADC value = %d", adcValue);
-    STEP_Println(msg);
+    if ((adcCurrent - adcBase) > 20) {
+        state = 1;
+    }
 
     HAL_TIM_IRQHandler(&htim6);
 }
