@@ -5,12 +5,64 @@
 #include <stdio.h>
 #include <string.h>
 
-ADC_HandleTypeDef hadc1;
-
 GPIO_InitTypeDef GPIOG_Init;
 
 UART_HandleTypeDef huart1;
+ADC_HandleTypeDef hadc1;
 RingBuffer rBuffer;
+
+uint32_t ADC_GetValue(uint32_t adc_channel);
+
+// структура для хранения соответствий Команда - Функция
+struct Command
+{
+    char * name; // здесь будет текст команды
+    void (*func)(void); // функция, которую надо выполнить
+};
+
+struct Command commands[3]; // у нас 3 команды в задаче
+
+void toggleGreen()
+{
+    HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13);
+}
+
+void toggleRed()
+{
+    HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_14);
+}
+
+void sendLum()
+{
+    char buf[50];
+    int value = ADC_GetValue(ADC_CHANNEL_13);
+    sprintf(buf, "ADC = %d\r\n", value);
+    HAL_UART_Transmit(&huart1, buf, strlen(buf), 100);
+}
+
+void AddActions() // заполняем массив нашими командами
+{
+    commands[0].name = "led1"; // команда
+    commands[0].func = toggleGreen; // функция
+
+    commands[1].name = "led2";
+    commands[1].func = toggleRed;
+
+    commands[2].name = "lum";
+    commands[2].func = sendLum;
+}
+
+void MakeAction(char * cmd)
+{
+    int i = 0;
+    for (i = 0; i <= 2; i++) // проходимся по всем командам в массиве
+    {
+        if (strcmp(commands[i].name, cmd) == 0) // нашли команду
+        {
+            commands[i].func(); // вызываем ее функцию
+        }
+    }
+}
 
 void UART_Init()
 {
@@ -31,30 +83,40 @@ void UART_Init()
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
     huart1.Instance = USART1;
-    huart1.Init.BaudRate = 9600; // скорость работы порта
-    huart1.Init.WordLength = UART_WORDLENGTH_8B; // длинна пакета
-    huart1.Init.StopBits = UART_STOPBITS_1; // длинна стоп-бита. У нас 1 или 2
+    huart1.Init.BaudRate = 9600;
+    huart1.Init.WordLength = UART_WORDLENGTH_8B;
+    huart1.Init.StopBits = UART_STOPBITS_1;
     huart1.Init.Parity = UART_PARITY_NONE;
-    huart1.Init.Mode = UART_MODE_TX_RX; // Используем режим приемопередатчик TransmitX_ReceiveX
+    huart1.Init.Mode = UART_MODE_TX_RX;
     huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-    huart1.Init.OverSampling = UART_OVERSAMPLING_16; // Частота опроса линии (проверка бита, его считывание)
+    huart1.Init.OverSampling = UART_OVERSAMPLING_16;
     HAL_UART_Init(&huart1);
 
-    NVIC_EnableIRQ(USART1_IRQn); // включаем прерывания UART1
-    __HAL_UART_ENABLE_IT(&huart1, UART_IT_RXNE); // Генерирование прерываний на прием сигнала
+    NVIC_EnableIRQ(USART1_IRQn); // Включаем прерывания UART1
+    __HAL_UART_ENABLE_IT(&huart1, UART_IT_RXNE);
 }
 
-void ADC1_Init()
+void ADC1_Init(void)
 {
-    GPIO_InitTypeDef portC;
-    __GPIOC_CLK_ENABLE();
-    portC.Pin = GPIO_PIN_3;
-    portC.Mode = GPIO_MODE_ANALOG;
-    portC.Pull = GPIO_NOPULL;
-    portC.Speed = GPIO_SPEED_LOW;
-    HAL_GPIO_Init(GPIOC, &portC);
-
+    GPIO_InitTypeDef portCinit;
     __ADC1_CLK_ENABLE();
+    __GPIOC_CLK_ENABLE();
+
+    /**
+    ADC1 GPIO Configuration
+    Из документации прочитали, что
+    пин PC0 используется, как 10 канал для АЦП1
+    PC1 - 11
+    PC2 - 12
+    PC3 - 13
+    */
+    portCinit.Pin   = GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3;
+    portCinit.Mode  = GPIO_MODE_ANALOG; // Выставляем его в аналоговый режим
+    portCinit.Pull  = GPIO_NOPULL; // без подтягивающих резисторов
+    HAL_GPIO_Init(GPIOC, &portCinit); // инициализируем порт С
+
+    /**Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+    */
     hadc1.Instance = ADC1; // указываем какой АЦП хотим использовать. Варианты ADC1, ADC2, ADC3
     hadc1.Init.ClockPrescaler = ADC_CLOCKPRESCALER_PCLK_DIV2; // Делитель частоты для АЦП
     hadc1.Init.Resolution = ADC_RESOLUTION12b; // точность (разрешение) АЦП. Выставили точность 12 бит (максимум)
@@ -69,34 +131,7 @@ void ADC1_Init()
     HAL_ADC_Init(&hadc1); // инициализируем АЦП
 }
 
-void LedInit()
-{
-    __GPIOG_CLK_ENABLE();
-
-    // ñâåòîäèîäû íàñòðàèâàåì íà âûõîä
-    GPIOG_Init.Pin   = GPIO_PIN_14 | GPIO_PIN_13; // 13 - çåëåíûé, 14 - êðàñíûé
-    GPIOG_Init.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIOG_Init.Pull  = GPIO_NOPULL;
-    GPIOG_Init.Speed = GPIO_SPEED_LOW;
-
-    HAL_GPIO_Init(GPIOG, &GPIOG_Init); // èíèçèàëèçèðóåì ïîðò, ïåðåäàåì ñòðóêòóðó
-}
-
-void brdLedInit()
-{
-    GPIO_InitTypeDef portB;
-
-    __GPIOB_CLK_ENABLE();
-
-    portB.Pin   = GPIO_PIN_7 | GPIO_PIN_4;
-    portB.Mode  = GPIO_MODE_OUTPUT_PP;
-    portB.Pull  = GPIO_NOPULL;
-    portB.Speed = GPIO_SPEED_LOW;
-
-    HAL_GPIO_Init(GPIOB, &portB);
-}
-
-uint32_t adcGetValue(uint32_t adc_channel)
+uint32_t ADC_GetValue(uint32_t adc_channel)
 {
     // Настраиваем канал
     ADC_ChannelConfTypeDef sConfig;
@@ -113,97 +148,54 @@ uint32_t adcGetValue(uint32_t adc_channel)
     return HAL_ADC_GetValue(&hadc1);
 }
 
+void LedInit()
+{
+    __GPIOG_CLK_ENABLE();
+
+    GPIOG_Init.Pin   = GPIO_PIN_14 | GPIO_PIN_13;
+    GPIOG_Init.Mode  = GPIO_MODE_OUTPUT_PP;
+    GPIOG_Init.Pull  = GPIO_NOPULL;
+    GPIOG_Init.Speed = GPIO_SPEED_LOW;
+
+    HAL_GPIO_Init(GPIOG, &GPIOG_Init);
+}
+
 void PrintBuf()
 {
-    char str[128]; // áóôåð äëÿ õðàíåíèÿ ñòðîêè íà îòïðàâêó
-    int i =0;
+    char str[128];
+    int i = 0;
     while(!RingBuffer_IsEmpty(&rBuffer))
     {
         char c = RingBuffer_GetByte(&rBuffer);
         if (c == '\r') continue;
-        str[i++%128] = c;
-        if (c == '\n' || i>=34)
+        str[i++ %128] = c;
+        if (c == '\n' || i>=36)
         {
-            if (c == '\n') str[i - 1] = 0;
+            if (c == '\n') str[i-1] = 0;
             else str[i] = 0;
-
-            STEP_Println(str);
-
-            str[i] = '\r';
-            str[i + 1] = '\n';
-            str[i + 2] = 0;
-
-            HAL_UART_Transmit(&huart1, str, strlen(str), 100);
-
             i=0;
+            STEP_Println(str);
+            MakeAction(str); // реагируем на команду
         }
-    }
-}
-
-void init()
-{
-    SystemInit();
-    HAL_Init();
-    STEP_Init();
-    LedInit();
-    brdLedInit();
-    ADC1_Init();
-
-    STEP_DBG_Osc();
-
-    UART_Init();
-}
-
-void listenCommands()
-{
-    char command[128], c, msg[20];
-    int i = 0, stop = 0, value;
-
-    while (!RingBuffer_IsEmpty(&rBuffer)) {
-        c = RingBuffer_GetByte(&rBuffer);
-        if (c == '\r') continue;
-        if (c == '\n') stop = 1;
-
-        command[i++%128] = c;
-
-        if (stop) {
-            command[i - 1] = 0;
-            sprintf(msg, "Command: %s", command);
-            STEP_Println(msg);
-
-            if (strcmpi(command, "led1on") == 0) {
-                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
-            } else if (strcmpi(command, "led1off") == 0) {
-                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET);
-            } else if (strcmpi(command, "led2on") == 0) {
-                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
-            } else if (strcmpi(command, "led2off") == 0) {
-                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
-            } else if (strcmpi(command, "lum") == 0) {
-                value = adcGetValue(ADC_CHANNEL_13);
-                sprintf(msg, "ADC value = %d", value);
-                STEP_Println(msg);
-                strcat(msg, "\r\n\0");
-                HAL_UART_Transmit(&huart1, msg, strlen(msg), 100);
-            }
-        }
-
     }
 }
 
 int main(void)
 {
-    init();
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+    SystemInit();
+    HAL_Init();
+    STEP_Init();
+    LedInit();
+    AddActions();
+    ADC1_Init();
+    STEP_DBG_Osc();
+
+    UART_Init();
 
     while (1)
     {
-        // PrintBuf();
-        listenCommands();
-
+        PrintBuf();
         HAL_Delay(1000);
-        //STEP_ClrScr();
     }
 }
 
