@@ -13,6 +13,63 @@ RingBuffer rBuffer;
 
 uint32_t ADC_GetValue(uint32_t adc_channel);
 
+
+// PWM initialization
+TIM_HandleTypeDef htim6;
+
+TIM_HandleTypeDef htim9;
+TIM_OC_InitTypeDef sConfigOC; // структура для настройки каналов таймера
+
+void TimersInit(){
+// BASIC Timer init
+    __TIM6_CLK_ENABLE();
+    htim6.Instance = TIM6;
+
+    // Частота таймера - 168 MHz
+    htim6.Init.CounterMode = TIM_COUNTERMODE_UP; // считает от 0 вверх
+    htim6.Init.Prescaler = 4 - 1; // Предделитель 4 (счет идет от 0!)
+    htim6.Init.Period = 420 - 1; // Период 420 (счет идет от 0!) 4*420 = 1680 (каждые 10 микросекунд)
+    HAL_TIM_Base_Init(&htim6); // Инициализируем
+
+    HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn); // Разрешаем прерывание таймера
+
+// GP Timer init
+    __TIM9_CLK_ENABLE();
+    __GPIOE_CLK_ENABLE();
+
+    // PE5 - TIM9_CH1
+    GPIO_InitTypeDef GPIOE_Init;
+
+    GPIOE_Init.Pin   = GPIO_PIN_5;
+    GPIOE_Init.Mode  = GPIO_MODE_AF_PP; // альтернативная функция
+    GPIOE_Init.Alternate = GPIO_AF3_TIM9; // название альтернативной функции
+    GPIOE_Init.Pull  = GPIO_NOPULL;
+    GPIOE_Init.Speed = GPIO_SPEED_LOW;
+
+    HAL_GPIO_Init(GPIOE, &GPIOE_Init);
+
+    htim9.Instance = TIM9;
+// сервоприводы работают на частоте 50 Гц
+    htim9.Init.Prescaler = 168 - 1; // 168 MHz / 168 = 1 MHz
+    htim9.Init.Period = 20000 - 1; // 50 Hz = 20 ms
+    htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
+
+    HAL_TIM_PWM_Init(&htim9);
+
+    sConfigOC.OCMode = TIM_OCMODE_PWM1;
+    //sConfigOC.Pulse = 2000; // 2000 микросекунд
+    sConfigOC.Pulse = 2500; // 2000 микросекунд
+    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+    HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_1);
+
+    /*sConfigOC.OCMode = TIM_OCMODE_PWM1;
+    sConfigOC.Pulse = 1440; // 1440 микросекунд
+    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+    HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_2);*/
+}
+
+// End of PWM initialization
+
 // структура для хранения соответствий Команда - Функция
 struct Command
 {
@@ -20,7 +77,7 @@ struct Command
     void (*func)(void); // функция, которую надо выполнить
 };
 
-struct Command commands[3]; // у нас 3 команды в задаче
+struct Command commands[5]; // у нас 3 команды в задаче
 
 void toggleGreen()
 {
@@ -30,6 +87,16 @@ void toggleGreen()
 void toggleRed()
 {
     HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_14);
+}
+
+void lock()
+{
+    setPWM(2500);
+}
+
+void unlock()
+{
+    setPWM(500);
 }
 
 void sendLum()
@@ -50,12 +117,18 @@ void AddActions() // заполняем массив нашими команда
 
     commands[2].name = "lum";
     commands[2].func = sendLum;
+
+    commands[3].name = "lock";
+    commands[3].func = lock;
+
+    commands[4].name = "unlock";
+    commands[4].func = unlock;
 }
 
 void MakeAction(char * cmd)
 {
     int i = 0;
-    for (i = 0; i <= 2; i++) // проходимся по всем командам в массиве
+    for (i = 0; i <= 4; i++) // проходимся по всем командам в массиве
     {
         if (strcmp(commands[i].name, cmd) == 0) // нашли команду
         {
@@ -180,6 +253,16 @@ void PrintBuf()
     }
 }
 
+void setPWM(int pulse)
+{
+    char msg[100];
+    sprintf(msg, "Current pulse: %d ; new: %d", TIM9->CCR1, pulse);
+    STEP_Println(msg);
+    TIM9->CCR1 = pulse; // записываем значение напрямую в регистр таймера
+    //TIM9->CCR2 = pulse;
+}
+
+
 int main(void)
 {
     SystemInit();
@@ -188,9 +271,15 @@ int main(void)
     LedInit();
     AddActions();
     ADC1_Init();
+    TimersInit();
     STEP_DBG_Osc();
 
     UART_Init();
+
+    HAL_TIM_Base_Start_IT(&htim6); // запускаем таймер в режиме прерываний
+
+    HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1); // запускаем генерацию ШИМ сигнала на 1-м канале
+    //HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2); // ... на 2-м канале
 
     while (1)
     {
@@ -202,6 +291,12 @@ int main(void)
 void USART1_IRQHandler()
 {
     STEP_UART_Receive_IT(&huart1, &rBuffer);
+}
+
+// Обработчик прерывания таймера
+void TIM6_DAC_IRQHandler()
+{
+    HAL_TIM_IRQHandler(&htim6);
 }
 
 void SysTick_Handler()
