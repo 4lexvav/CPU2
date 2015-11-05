@@ -4,3 +4,4 @@ Lx-Working/src/*
 !Lx-Working/src/main.c
 i2c/*
 FreeRTOS_Mutex/*
+STM32F103-DEMO/*
